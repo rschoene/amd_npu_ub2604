@@ -1,0 +1,9 @@
+# Python virtual environment
+.venv/
+
+# Downloaded NPU benchmark artifacts (fetched from Xilinx/VTD on demand)
+artifacts/
+
+# xrt-runner reports
+*.report
+report*.json
