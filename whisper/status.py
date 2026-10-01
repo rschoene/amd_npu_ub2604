@@ -60,13 +60,22 @@ def main() -> int:
 
     # --- Stage 3: AIE compiler -------------------------------------------
     print("\n[3] AIE compiler (aiecc)")
-    if have_bin("aiecc"):
-        print(f"  [OK ] aiecc at {shutil.which('aiecc')}")
+    aiecc_path = shutil.which("aiecc")
+    if aiecc_path is None:
+        # Check the local tools/ironenv/ venv
+        import glob
+        for pattern in ("../tools/ironenv/bin/aiecc",
+                        "../tools/ironenv/lib/python3.*/site-packages/mlir_aie/bin/aiecc"):
+            matches = glob.glob(os.path.join(os.path.dirname(__file__), pattern))
+            if matches:
+                aiecc_path = matches[0]
+                break
+    if aiecc_path:
+        print(f"  [OK ] aiecc at {aiecc_path}")
     else:
-        print("  [MISS] aiecc not found on PATH")
-        print("         The AIE compiler ships with AMD's XDNA / Vitis software")
-        print("         stack and is intentionally not installed by setup_npu.sh.")
-        print("         See README_whisper.md for the install path.")
+        print("  [MISS] aiecc not found")
+        print("         Install with:  ./setup_whisper.sh aiecc")
+        print("         (installs mlir-aie + Peano into tools/ironenv/, ~500 MB)")
 
     # --- Stage 4: NPU runtime --------------------------------------------
     print("\n[4] NPU runtime")

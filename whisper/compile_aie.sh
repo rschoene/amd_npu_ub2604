@@ -20,12 +20,32 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ONNX="${1:-${REPO_ROOT}/artifacts/whisper/whisper_encoder.onnx}"
 OUT_DIR="${REPO_ROOT}/artifacts/whisper/aie"
 
-if ! command -v aiecc >/dev/null 2>&1; then
-    echo "ERROR: 'aiecc' not found on PATH." >&2
-    echo "       The AIE compiler ships with AMD's XDNA / Vitis software stack." >&2
-    echo "       Install it first (see README_whisper.md), then re-run this script." >&2
+# Locate aiecc: check PATH first, then the local tools/ironenv/ venv.
+AIECC=""
+if command -v aiecc >/dev/null 2>&1; then
+    AIECC="aiecc"
+elif [[ -x "${REPO_ROOT}/tools/ironenv/bin/aiecc" ]]; then
+    AIECC="${REPO_ROOT}/tools/ironenv/bin/aiecc"
+else
+    # Try to find it via the venv's site-packages layout
+    for sp in "${REPO_ROOT}"/tools/ironenv/lib/python3.*/site-packages/mlir_aie/bin/aiecc; do
+        if [[ -x "${sp}" ]]; then
+            AIECC="${sp}"
+            break
+        fi
+    done
+fi
+
+if [[ -z "${AIECC}" ]]; then
+    echo "ERROR: 'aiecc' not found." >&2
+    echo "       Install it with:  ./setup_whisper.sh aiecc" >&2
+    echo "       (installs into tools/ironenv/, ~500 MB download)" >&2
     exit 1
 fi
+
+# Ensure aiecc's shared libs are findable
+AIECC_DIR="$(dirname "${AIECC}")"
+export LD_LIBRARY_PATH="${AIECC_DIR}/../lib:${LD_LIBRARY_PATH:-}"
 
 if [[ ! -f "${ONNX}" ]]; then
     echo "ERROR: ONNX model not found: ${ONNX}" >&2

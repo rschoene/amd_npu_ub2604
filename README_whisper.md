@@ -53,10 +53,13 @@ So there are **two paths**, and you can use them independently:
 # 1. Export the encoder to ONNX
 .venv/bin/python whisper/export_onnx.py --model base
 
-# 2. Install the AIE compiler (aiecc) from AMD's XDNA / Vitis stack, then:
+# 2. Install the AIE compiler (aiecc) into a local tools/ironenv/ venv
+./setup_whisper.sh aiecc
+
+# 3. Compile the ONNX for the NPU
 whisper/compile_aie.sh
 
-# 3. Run the compiled encoder on the NPU
+# 4. Run the compiled encoder on the NPU
 whisper/run_npu.sh
 ```
 
@@ -70,14 +73,29 @@ other NPU/edge Whisper deployments.
 
 ### Installing `aiecc`
 
-The AIE compiler is part of AMD's XDNA / Vitis AI software stack. It is a large,
-version-specific download and is deliberately left out of `setup_npu.sh`. See
-AMD's XDNA documentation for the current release and the exact `aiecc` flags
-for your Strix (strx) target. `whisper/compile_aie.sh` encodes the standard
-flow and fails fast with a clear message if `aiecc` is missing.
+```
+./setup_whisper.sh aiecc
+```
+
+This installs the **mlir-aie** (IRON) toolchain + **Peano** (llvm-aie) into a
+local `tools/ironenv/` venv using your existing Python (3.14). The `aiecc`
+binary ends up at `tools/ironenv/lib/python3.14/site-packages/mlir_aie/bin/aiecc`.
+
+- **~500 MB** download (two wheels: `mlir_aie` + `llvm-aie`)
+- Everything stays local under `tools/` (git-ignored)
+- No `sudo` needed
+- `whisper/compile_aie.sh` auto-detects `aiecc` from `tools/ironenv/`
+
+> **Caveat:** The upstream `env_install.sh` hard-requires Python 3.12, but the
+> release wheels ship cp314 variants. This script bypasses that check and
+> installs the cp314 wheel directly. If you hit ABI issues, fall back to
+> `sudo apt install python3.12` and re-run.
 
 ## Notes
 
 - `artifacts/whisper/` is git-ignored (large model + compiled binaries).
+- `tools/` is git-ignored (AIE compiler toolchain, ~500 MB).
 - The CPU path uses `fp16=False` (CPU has no fp16).
 - Model sizes: `tiny`/`base` are the practical choices for on-device work.
+- The `aiecc` install uses Python 3.14 (cp314 wheels). If you encounter
+  compatibility issues, install `python3.12` via apt and re-run.
