@@ -14,7 +14,7 @@ kernel 7.0.0-34-generic. Measured **51 TOPS** (INT8 GEMM) via `xrt-smi validate`
 | `setup_npu.sh` | Install / uninstall / status for the whole stack |
 | `scripts/test_npu.py` | Diagnostic: memlock, device node, XRT device open |
 | `artifacts/gemm/` | Prebuilt GEMM benchmark (downloaded on demand, git-ignored) |
-| `whisper/` + `setup_whisper.sh` | Run Whisper (CPU now, NPU encoder via AIE) — see `README_whisper.md` |
+| `whisper/` + `setup_whisper.sh` | Run Whisper (CPU now, NPU via Ryzen AI SDK / VitisEP) — see `README_whisper.md` |
 
 Everything runs **as your user** at runtime — no `sudo` needed to use the NPU.
 `sudo` is only required once, during install.
@@ -94,12 +94,14 @@ xrt-smi validate -r throughput
 
 ## Running your own models
 
-The NPU executes **compiled AIE binaries** (`.xclbin` + `.elf`), not raw ONNX.
-To run a model you author, you need the **AIE compiler** (`aiecc`) from AMD's
-XDNA / Vitis software stack to produce those artifacts, then feed them to
-`xrt-runner` the same way as the GEMM test above. That toolchain is a large
-download and is intentionally *not* installed by `setup_npu.sh`. See the
-upstream XDNA documentation for the current compiler release and model flow.
+For standard ML models (CNNs, transformers, Whisper, LLMs), the supported path
+is the **Ryzen AI Software (RAI)** stack: export your model to ONNX, then run it
+with the RAI's `onnxruntime` build, whose **Vitis AI Execution Provider**
+compiles the NPU-supported subgraphs to AIE at runtime. No manual compiler step.
+See `README_whisper.md` for a worked example (Whisper).
+
+The lower-level `aiecc` (mlir-aie / IRON) compiler is for writing *custom* AIE
+kernels in MLIR — not for deploying standard models — and is not installed here.
 
 ## Uninstall
 

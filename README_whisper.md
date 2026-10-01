@@ -4,40 +4,45 @@ This directory holds the pipeline for running **OpenAI Whisper** on the AMD
 Ryzen AI NPU. It builds on the base NPU stack from `setup_npu.sh` (driver,
 XRT, memlock) and adds the model side.
 
-## The honest picture
+## How it works
 
-The NPU executes **compiled AIE binaries** (`.xclbin` + `.elf`), not raw ONNX
-or PyTorch. So getting Whisper onto the NPU is a real pipeline, not a one-liner:
+The NPU path uses AMD's **Ryzen AI Software (RAI)** stack. The key piece is the
+**Vitis AI Execution Provider (VitisEP)** — a custom `onnxruntime` build that
+ships with RAI. You feed it the pre-quantized Whisper ONNX models; the VitisEP
+partitions the graph, compiles the NPU-supported subgraphs to AIE *at runtime*,
+and runs them on the NPU. **There is no manual AIE-compile step.**
 
 ```
-Whisper (PyTorch)  →  ONNX  →  aiecc (AIE compiler)  →  .xclbin/.elf  →  xrt-runner
-     encoder            encoder        int8 quantize          NPU executes
+Pre-quantized Whisper ONNX (amd/whisper-*-onnx-npu on HuggingFace)
+    → onnxruntime + VitisAIExecutionProvider  (from the RAI SDK)
+        → VitisEP compiles subgraphs to AIE at runtime (~15 min first run)
+            → NPU executes: encoder 100%, decoder ~93%
 ```
 
-Two things are **not** present out of the box on a fresh `setup_npu.sh` install:
+This is the same flow as AMD's official
+[Whisper demo](https://github.com/amd/RyzenAI-SW/blob/main/Demos/ASR/Whisper).
 
-1. **`aiecc`** — the AIE compiler. It ships with AMD's XDNA / Vitis software
-   stack and is intentionally *not* installed by `setup_npu.sh` (large download).
-2. **A prebuilt Whisper binary** — AMD's [VTD](https://github.com/Xilinx/VTD)
-   archive only ships `gemm`, `resnet50`, and microbenchmarks, no Whisper.
+> **Note on an earlier approach:** a first draft of this repo tried to export
+> Whisper to ONNX and compile it with `aiecc` (the mlir-aie/IRON compiler).
+> That was the wrong tool — `aiecc` takes `.mlir` designs for *custom* AIE
+> kernels, not standard ML models. The RAI/VitisEP path above is the supported
+> way to run Whisper on the NPU.
 
-So there are **two paths**, and you can use them independently:
+## Two paths
 
 | Path | What runs where | Needs | Works today? |
 |------|-----------------|-------|--------------|
 | **CPU** | Full Whisper in PyTorch on CPU | `openai-whisper` + `torch` | Yes, after `./setup_whisper.sh install` |
-| **NPU** | Whisper *encoder* offloaded to NPU | `aiecc` + exported ONNX | After installing the AIE compiler |
+| **NPU** | Whisper encoder+decoder via VitisEP | RAI SDK (VitisEP) + NPU runtime | After `./setup_whisper.sh rai` + RAI installer |
 
 ## Files
 
 | Path | Purpose |
 |------|---------|
-| `setup_whisper.sh` | Install the ML Python deps into `.venv` |
+| `setup_whisper.sh` | `install` (CPU deps) / `rai` (Miniforge + RAI) / `status` |
 | `whisper/status.py` | Report which pipeline stages are ready |
 | `whisper/transcribe.py` | **CPU** transcription (works immediately) |
-| `whisper/export_onnx.py` | Export the Whisper encoder to ONNX |
-| `whisper/compile_aie.sh` | Compile ONNX → AIE binaries (needs `aiecc`) |
-| `whisper/run_npu.sh` | Run the compiled encoder on the NPU via `xrt-runner` |
+| `whisper/run_npu.py` | **NPU** transcription via the VitisAI EP |
 
 ## Quick start — CPU transcription (works now)
 
@@ -50,52 +55,69 @@ So there are **two paths**, and you can use them independently:
 ## The NPU path
 
 ```bash
-# 1. Export the encoder to ONNX
-.venv/bin/python whisper/export_onnx.py --model base
+# 1. Local setup: Miniforge + 'ryzen-ai' conda env + demo deps
+./setup_whisper.sh rai
 
-# 2. Install the AIE compiler (aiecc) into a local tools/ironenv/ venv
-./setup_whisper.sh aiecc
+# 2. Install the Ryzen AI SDK itself (AMD account download — see below)
+#    Point it at the 'ryzen-ai' conda env.
 
-# 3. Compile the ONNX for the NPU
-whisper/compile_aie.sh
+# 3. Verify the VitisEP is present
+tools/miniforge3/bin/conda run -n ryzen-ai python -c \
+    "import onnxruntime as ort; print(ort.get_available_providers())"
+#    -> should list 'VitisAIExecutionProvider'
 
-# 4. Run the compiled encoder on the NPU
-whisper/run_npu.sh
+# 4. Run Whisper on the NPU (first run compiles for ~15 min)
+tools/miniforge3/bin/conda run -n ryzen-ai python whisper/run_npu.py \
+    --model-type whisper-small --device npu --input audio.wav
 ```
 
-### Why only the encoder?
+### Installing the Ryzen AI SDK
 
-Whisper = **encoder** (fixed-shape transformer over the 30 s mel spectrogram)
-+ **decoder** (autoregressive, one token at a time). The encoder is the bulk of
-the compute and has a static shape — exactly what `aiecc` can target. The
-autoregressive decoder is normally kept on CPU. This is the same split used by
-other NPU/edge Whisper deployments.
+`./setup_whisper.sh rai` does everything that can be automated locally:
 
-### Installing `aiecc`
+1. Installs **Miniforge** into `tools/miniforge3` (no `sudo`, no `~/.bashrc`).
+2. Creates a **`ryzen-ai`** conda env (Python 3.12).
+3. Installs the demo's Python deps (`torch`, `torchaudio`, `transformers`,
+   `onnxruntime`, `huggingface_hub`, `jiwer`, `sounddevice`, `soundfile`).
 
+The **RAI SDK itself** (which provides the VitisEP) is **not** on a public
+conda/pip channel — it comes from the RAI installer, downloaded from the AMD
+portal:
+
+- Docs: <https://ryzenai.docs.amd.com/en/latest/inst.html>
+- RAI **1.7.1+** ships a **Linux** installer (earlier releases were Windows-only).
+
+Run the installer so it installs into the `ryzen-ai` conda env created above.
+Everything stays under `tools/` (git-ignored).
+
+### Models
+
+`run_npu.py` auto-downloads the NPU-optimized ONNX models from HuggingFace:
+
+| `--model-type` | HuggingFace repo |
+|----------------|------------------|
+| `whisper-small` | `amd/whisper-small-onnx-npu` |
+| `whisper-medium` | `amd/whisper-medium-onnx-npu` |
+| `whisper-large-v3-turbo` | `amd/whisper-large-turbo-onnx-npu` |
+
+For other sizes (e.g. `whisper-base`), pass `--encoder`/`--decoder` paths
+explicitly.
+
+### Whisper-medium note
+
+If `whisper-medium` fails to compile on the NPU, add these flags to the
+encoder's VitisEP config JSON and pass it via `--encoder-config`:
+
+```json
+{ "vaiml_config": { "optimize_level": 3, "aiecompiler_args": "--system-stack-size=512" } }
 ```
-./setup_whisper.sh aiecc
-```
-
-This installs the **mlir-aie** (IRON) toolchain + **Peano** (llvm-aie) into a
-local `tools/ironenv/` venv using your existing Python (3.14). The `aiecc`
-binary ends up at `tools/ironenv/lib/python3.14/site-packages/mlir_aie/bin/aiecc`.
-
-- **~500 MB** download (two wheels: `mlir_aie` + `llvm-aie`)
-- Everything stays local under `tools/` (git-ignored)
-- No `sudo` needed
-- `whisper/compile_aie.sh` auto-detects `aiecc` from `tools/ironenv/`
-
-> **Caveat:** The upstream `env_install.sh` hard-requires Python 3.12, but the
-> release wheels ship cp314 variants. This script bypasses that check and
-> installs the cp314 wheel directly. If you hit ABI issues, fall back to
-> `sudo apt install python3.12` and re-run.
 
 ## Notes
 
-- `artifacts/whisper/` is git-ignored (large model + compiled binaries).
-- `tools/` is git-ignored (AIE compiler toolchain, ~500 MB).
+- `artifacts/whisper/` is git-ignored (downloaded models + VitisEP cache).
+- `tools/` is git-ignored (Miniforge + RAI SDK, several GB).
 - The CPU path uses `fp16=False` (CPU has no fp16).
-- Model sizes: `tiny`/`base` are the practical choices for on-device work.
-- The `aiecc` install uses Python 3.14 (cp314 wheels). If you encounter
-  compatibility issues, install `python3.12` via apt and re-run.
+- First NPU run compiles the model (~15 min); later runs load from the
+  VitisEP cache in `artifacts/whisper/cache/`.
+- The RAI conda env uses Python 3.12 (RAI's supported version), independent of
+  the system Python 3.14 used by the CPU `.venv`.

@@ -5,7 +5,7 @@
 __pycache__/
 *.pyc
 
-# AIE compiler toolchain (mlir-aie + Peano, installed by setup_whisper.sh aiecc)
+# Ryzen AI SDK toolchain (Miniforge + RAI, installed by setup_whisper.sh rai)
 tools/
 
 # Downloaded NPU benchmark artifacts (fetched from Xilinx/VTD on demand)

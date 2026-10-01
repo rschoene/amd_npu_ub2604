@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
 #
-# setup_whisper.sh — Install the Python dependencies for the Whisper pipeline.
+# setup_whisper.sh — Install the dependencies for the Whisper pipeline.
 #
-# This is separate from setup_npu.sh on purpose: it only adds the ML packages
-# (openai-whisper, torch, onnx, onnxruntime) into the existing .venv. It does
-# NOT touch the NPU driver / XRT stack.
+# This is separate from setup_npu.sh on purpose: it adds the ML packages and
+# (optionally) the Ryzen AI SDK. It does NOT touch the NPU driver / XRT stack
+# that setup_npu.sh manages.
 #
 # Usage:
-#   ./setup_whisper.sh install       # CPU Whisper deps (torch, openai-whisper, onnx)
-#   ./setup_whisper.sh aiecc         # AIE compiler (mlir-aie + Peano) in tools/ironenv/
-#   ./setup_whisper.sh status        # Show pipeline readiness
+#   ./setup_whisper.sh install    # CPU Whisper deps (torch, openai-whisper, onnx)
+#   ./setup_whisper.sh rai        # Ryzen AI SDK (Miniforge + RAI) in tools/
+#   ./setup_whisper.sh status     # Show pipeline readiness
 #
-# Note: torch + openai-whisper are large downloads (~2 GB for CPU torch).
-#       aiecc pulls ~500 MB of wheels into a local tools/ironenv/ venv.
+# Note:
+#   - 'install' pulls ~2 GB (CPU torch) into the existing .venv.
+#   - 'rai' installs a local Miniforge + the Ryzen AI SDK into tools/. The RAI
+#     SDK provides the onnxruntime build with the VitisAIExecutionProvider that
+#     actually runs Whisper on the NPU. The RAI installer itself must be
+#     downloaded from the AMD account portal (see README_whisper.md).
 
 set -euo pipefail
 
@@ -21,13 +25,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VENV="${REPO_ROOT}/.venv"
 PY="${VENV}/bin/python"
 TOOLS_DIR="${REPO_ROOT}/tools"
-IRON_VENV="${TOOLS_DIR}/ironenv"
-
-# mlir-aie release to install (cp314 wheel available since v1.4.3)
-MLIR_AIE_VERSION="v1.4.3"
-MLIR_AIE_WHEEL_URL="https://github.com/Xilinx/mlir-aie/releases/expanded_assets/${MLIR_AIE_VERSION}"
-PEANO_INDEX="https://github.com/Xilinx/llvm-aie/releases/expanded_assets/nightly"
-PEANO_SPEC="llvm-aie==22.0.0.2026090701+3e93bf7b"
+MINIFORGE="${TOOLS_DIR}/miniforge3"
+RAI_ENV_NAME="ryzen-ai"
 
 cmd="${1:-install}"
 
@@ -38,7 +37,7 @@ case "${cmd}" in
             exit 1
         fi
         echo "Installing Whisper dependencies into ${VENV} ..."
-        # CPU-only torch to keep the download small (NPU work is via AIE, not CUDA).
+        # CPU-only torch to keep the download small (NPU work is via VitisEP, not CUDA).
         "${PY}" -m pip install --upgrade pip
         "${PY}" -m pip install \
             torch --index-url https://download.pytorch.org/whl/cpu
@@ -47,77 +46,70 @@ case "${cmd}" in
         echo "Done. Verify with:  ${PY} whisper/status.py"
         ;;
 
-    aiecc)
-        # --- Install the AIE compiler (aiecc) into a local tools/ironenv/ venv ---
+    rai)
+        # --- Install the Ryzen AI SDK (RAI) into a local tools/ tree ---------
         #
-        # This bypasses the upstream env_install.sh (which hard-requires
-        # python3.12) and instead uses the existing Python (3.14) with the
-        # matching cp314 wheels. Everything stays local under tools/.
+        # The RAI SDK ships a custom onnxruntime build that includes the
+        # VitisAIExecutionProvider (VitisEP). That EP is what compiles the
+        # Whisper ONNX subgraphs to AIE and runs them on the NPU. There is no
+        # public conda/pip package for it — it comes from the RAI installer.
         #
-        # Known caveat: the upstream env_setup.sh is not used; instead we
-        # locate aiecc directly. If you later need the full IRON Python API
-        # (aie.iron), source the env manually:
-        #   source tools/ironenv/bin/activate
-        #   export MLIR_AIE_INSTALL_DIR="$(python -c 'import mlir_aie; print(mlir_aie.__path__[0])')"
-        #   export PATH="${MLIR_AIE_INSTALL_DIR}/bin:${PATH}"
-        #   export PYTHONPATH="${MLIR_AIE_INSTALL_DIR}/python:${PYTHONPATH}"
-        #   export LD_LIBRARY_PATH="${MLIR_AIE_INSTALL_DIR}/lib:${LD_LIBRARY_PATH}"
+        # This script does the parts that can be automated locally:
+        #   1. Install Miniforge into tools/miniforge3 (no sudo, no ~/.bashrc)
+        #   2. Create a 'ryzen-ai' conda env
+        #   3. Install the demo's Python deps into that env
+        #
+        # It then STOPS and tells you to run the RAI installer (which needs an
+        # AMD account download) into that env. See README_whisper.md.
 
-        # Find a suitable Python (prefer 3.14, fall back to 3.13/3.12)
-        aie_py=""
-        for candidate in python3.14 python3.13 python3.12 "${PY}"; do
-            if command -v "${candidate}" >/dev/null 2>&1; then
-                aie_py="${candidate}"
-                break
-            fi
-        done
-        if [[ -z "${aie_py}" ]]; then
-            echo "ERROR: No suitable Python found (need 3.12+)." >&2
-            exit 1
-        fi
-        aie_py_ver="$("${aie_py}" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
-        echo "Using ${aie_py} (Python ${aie_py_ver}) for the AIE toolchain."
-
-        # Create the local venv
         mkdir -p "${TOOLS_DIR}"
-        if [[ ! -d "${IRON_VENV}" ]]; then
-            echo "Creating venv at ${IRON_VENV} ..."
-            "${aie_py}" -m venv "${IRON_VENV}"
-        fi
-        aie_pip="${IRON_VENV}/bin/pip"
-        aie_venv_py="${IRON_VENV}/bin/python"
 
-        echo "Upgrading pip ..."
-        "${aie_venv_py}" -m pip install --upgrade pip
-
-        # Install Peano (llvm-aie) — the per-core RISC-V compiler
-        echo "Installing Peano (llvm-aie) ..."
-        "${aie_pip}" install -U "${PEANO_SPEC}" -f "${PEANO_INDEX}"
-
-        # Install mlir_aie (contains aiecc) — cp314 wheel
-        echo "Installing mlir_aie ${MLIR_AIE_VERSION} (contains aiecc) ..."
-        "${aie_pip}" install -U "mlir_aie" -f "${MLIR_AIE_WHEEL_URL}"
-
-        # Locate aiecc
-        aiecc_dir="$("${aie_venv_py}" -c 'import mlir_aie; print(mlir_aie.__path__[0])' 2>/dev/null || true)"
-        aiecc_bin="${aiecc_dir}/bin/aiecc"
-
-        if [[ -x "${aiecc_bin}" ]]; then
-            echo
-            echo "aiecc installed at: ${aiecc_bin}"
-            echo
-            echo "To use it, either add to PATH:"
-            echo "  export PATH=\"${aiecc_dir}/bin:\$PATH\""
-            echo "  export LD_LIBRARY_PATH=\"${aiecc_dir}/lib:\$LD_LIBRARY_PATH\""
-            echo
-            echo "Or run whisper/compile_aie.sh which auto-detects it."
+        # 1. Miniforge (local, no system modification)
+        if [[ ! -x "${MINIFORGE}/bin/conda" ]]; then
+            echo "Installing Miniforge into ${MINIFORGE} ..."
+            installer="${TOOLS_DIR}/miniforge.sh"
+            curl -L -o "${installer}" \
+                "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh"
+            bash "${installer}" -b -p "${MINIFORGE}"
+            rm -f "${installer}"
         else
-            echo
-            echo "WARNING: aiecc not found at expected location."
-            echo "         The wheel layout may differ; check:"
-            echo "           ${IRON_VENV}/lib/python${aie_py_ver}/site-packages/mlir_aie/"
-            exit 1
+            echo "Miniforge already present at ${MINIFORGE}"
         fi
+
+        conda="${MINIFORGE}/bin/conda"
+
+        # 2. Create the RAI conda env (idempotent)
+        echo "Ensuring conda env '${RAI_ENV_NAME}' ..."
+        "${conda}" env list | awk '{print $1}' | grep -qx "${RAI_ENV_NAME}" \
+            || "${conda}" create -y -n "${RAI_ENV_NAME}" python=3.12
+
+        # 3. Install the Whisper demo's Python deps into the env
+        echo "Installing Whisper demo dependencies into '${RAI_ENV_NAME}' ..."
+        "${conda}" run -n "${RAI_ENV_NAME}" pip install --upgrade pip
+        "${conda}" run -n "${RAI_ENV_NAME}" pip install \
+            torch torchaudio transformers onnxruntime \
+            huggingface_hub jiwer sounddevice soundfile
+
+        echo
+        echo "=============================================================="
+        echo " Local setup done. Next, install the Ryzen AI SDK itself:"
+        echo
+        echo "  1. Download the RAI Linux installer from the AMD portal:"
+        echo "     https://ryzenai.docs.amd.com/en/latest/inst.html"
+        echo "     (RAI 1.7.1+ ships a Linux installer)"
+        echo
+        echo "  2. Run it, pointing it at the '${RAI_ENV_NAME}' conda env:"
+        echo "     ${conda} env list   # confirm the env exists"
+        echo
+        echo "  3. Verify the VitisEP is available:"
+        echo "     ${conda} run -n ${RAI_ENV_NAME} python -c \\"
+        echo "       'import onnxruntime as ort; print(ort.get_available_providers())'"
+        echo "     -> should list 'VitisAIExecutionProvider'"
+        echo
+        echo "  4. Run Whisper on the NPU:"
+        echo "     ${conda} run -n ${RAI_ENV_NAME} python whisper/run_npu.py \\"
+        echo "       --model-type whisper-base --device npu --input audio.wav"
+        echo "=============================================================="
         ;;
 
     status)
@@ -130,7 +122,7 @@ case "${cmd}" in
         ;;
 
     *)
-        echo "Usage: $0 {install|aiecc|status}" >&2
+        echo "Usage: $0 {install|rai|status}" >&2
         exit 1
         ;;
 esac
