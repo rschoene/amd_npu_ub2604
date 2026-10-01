@@ -14,6 +14,7 @@ kernel 7.0.0-34-generic. Measured **51 TOPS** (INT8 GEMM) via `xrt-smi validate`
 | `setup_npu.sh` | Install / uninstall / status for the whole stack |
 | `scripts/test_npu.py` | Diagnostic: memlock, device node, XRT device open |
 | `artifacts/gemm/` | Prebuilt GEMM benchmark (downloaded on demand, git-ignored) |
+| `whisper/` + `setup_whisper.sh` | Run Whisper (CPU now, NPU encoder via AIE) — see `README_whisper.md` |
 
 Everything runs **as your user** at runtime — no `sudo` needed to use the NPU.
 `sudo` is only required once, during install.

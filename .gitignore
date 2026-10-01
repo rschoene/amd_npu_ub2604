@@ -4,6 +4,9 @@
 # Downloaded NPU benchmark artifacts (fetched from Xilinx/VTD on demand)
 artifacts/
 
+# Whisper model + compiled AIE binaries (large, generated on demand)
+artifacts/whisper/
+
 # xrt-runner reports
 *.report
 report*.json
