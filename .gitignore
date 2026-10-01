@@ -5,7 +5,7 @@
 __pycache__/
 *.pyc
 
-# Ryzen AI SDK toolchain (Miniforge + RAI, installed by setup_whisper.sh rai)
+# Ryzen AI SDK (RAI package + its venv, installed by setup_whisper.sh rai)
 tools/
 
 # Downloaded NPU benchmark artifacts (fetched from Xilinx/VTD on demand)
@@ -13,6 +13,11 @@ artifacts/
 
 # Whisper model + compiled AIE binaries (large, generated on demand)
 artifacts/whisper/
+
+# Ryzen AI SDK package (downloaded from the AMD portal, large)
+whisper/ryzen_ai-*.tgz
+whisper/ryzen_ai-*.tgz.part
+*.part
 
 # xrt-runner reports
 *.report

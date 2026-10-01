@@ -9,7 +9,7 @@ runtime and runs them on the NPU. There is no manual AIE-compile step.
 Stages:
   1. CPU deps      : openai-whisper + torch in .venv  (CPU transcription)
   2. NPU runtime   : xrt-smi / pyxrt  (driver + XRT, from setup_npu.sh)
-  3. RAI SDK       : Miniforge + 'ryzen-ai' conda env with VitisAIExecutionProvider
+  3. RAI SDK       : RAI venv (tools/ryzen_ai/venv) with VitisAIExecutionProvider
   4. NPU models    : pre-quantized Whisper ONNX (auto-downloaded on first run)
 
 This script only *inspects* the environment; it installs nothing.
@@ -37,9 +37,13 @@ def repo_root() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
+RAI_VENV_PY = os.path.join("tools", "ryzen_ai", "venv", "bin", "python")
+RAI_TGZ = os.path.join("whisper", "ryzen_ai-1.8.0.tgz")
+
+
 def check_vitisep() -> bool:
-    """Check whether the RAI conda env's onnxruntime has the VitisAI EP."""
-    py = os.path.join(repo_root(), "tools", "miniforge3", "envs", "ryzen-ai", "bin", "python")
+    """Check whether the RAI venv's onnxruntime has the VitisAI EP."""
+    py = os.path.join(repo_root(), RAI_VENV_PY)
     if not os.path.isfile(py):
         return False
     try:
@@ -72,17 +76,18 @@ def main() -> int:
 
     # --- Stage 3: RAI SDK / VitisEP ---------------------------------------
     print("\n[3] Ryzen AI SDK (VitisAIExecutionProvider)")
-    miniforge = os.path.join(repo_root(), "tools", "miniforge3", "bin", "conda")
-    if os.path.isfile(miniforge):
-        print(f"  [OK ] Miniforge at {os.path.dirname(os.path.dirname(miniforge))}")
+    tgz = os.path.join(repo_root(), RAI_TGZ)
+    if os.path.isfile(tgz):
+        print(f"  [OK ] RAI package present ({RAI_TGZ})")
     else:
-        print("  [MISS] Miniforge (tools/miniforge3)")
-        print("         Run: ./setup_whisper.sh rai")
+        print(f"  [MISS] RAI package not downloaded ({RAI_TGZ})")
+        print("         Download ryzen_ai-1.8.0.tgz from the AMD portal, then:")
+        print("         ./setup_whisper.sh rai")
     if check_vitisep():
-        print("  [OK ] VitisAIExecutionProvider available in 'ryzen-ai' env")
+        print("  [OK ] VitisAIExecutionProvider available in RAI venv")
     else:
         print("  [MISS] VitisAIExecutionProvider not detected")
-        print("         Install the RAI SDK into the 'ryzen-ai' env (see README_whisper.md)")
+        print("         Run: ./setup_whisper.sh rai  (needs the .tgz in whisper/)")
 
     # --- Stage 4: NPU models ----------------------------------------------
     print("\n[4] NPU Whisper ONNX models")
@@ -99,7 +104,7 @@ def main() -> int:
         print("  CPU transcription: NOT READY (run ./setup_whisper.sh install)")
     if npu_ready:
         print("  NPU inference:     READY")
-        print("    tools/miniforge3/bin/conda run -n ryzen-ai python whisper/run_npu.py \\")
+        print("    source tools/ryzen_ai/venv/bin/activate && python whisper/run_npu.py \\")
         print("        --model-type whisper-small --device npu --input <audio.wav>")
     else:
         print("  NPU inference:     NOT READY (needs RAI SDK with VitisEP + NPU runtime)")
