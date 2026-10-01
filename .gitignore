@@ -1,6 +1,10 @@
 # Python virtual environment
 .venv/
 
+# Python bytecode
+__pycache__/
+*.pyc
+
 # Downloaded NPU benchmark artifacts (fetched from Xilinx/VTD on demand)
 artifacts/
 
