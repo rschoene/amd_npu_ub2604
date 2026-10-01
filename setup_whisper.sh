@@ -62,17 +62,40 @@ case "${cmd}" in
         #
         # The .tgz is SSO-gated behind the AMD account portal, so it cannot be
         # fetched anonymously. This script:
-        #   1. Checks for the .tgz in whisper/ (download it first if missing)
-        #   2. Extracts it and runs install_ryzen_ai.sh non-interactively
-        #   3. Verifies the VitisEP is present in the resulting venv
+        #   1. Ensures a local Python 3.12 (via uv — no sudo/apt needed)
+        #   2. Checks for the .tgz in whisper/ (download it first if missing)
+        #   3. Extracts it and runs install_ryzen_ai.sh non-interactively
+        #   4. Verifies the VitisEP is present in the resulting venv
 
-        # 1. RAI requires Python 3.12.x (it builds its own venv from it).
-        if ! command -v python3.12 >/dev/null 2>&1; then
-            echo "ERROR: RAI requires Python 3.12.x, but python3.12 was not found." >&2
-            echo "       Install it first:" >&2
-            echo "         sudo apt update && sudo apt install -y python3.12 python3.12-venv" >&2
-            exit 1
+        # 1. RAI's installer hard-requires python3.12 (it calls `python3.12`
+        #    directly to build its venv). Ubuntu 26.04 has no python3.12 in apt,
+        #    so we provision one locally with uv (downloads a managed CPython
+        #    into ~/.local/share/uv, no sudo). We then expose a `python3.12`
+        #    shim on PATH so the RAI installer finds it.
+        UV_BIN="${TOOLS_DIR}/bin/uv"
+        if [[ ! -x "${UV_BIN}" ]] && ! command -v uv >/dev/null 2>&1; then
+            echo "Installing uv (local, into ${TOOLS_DIR}/bin) ..."
+            mkdir -p "${TOOLS_DIR}/bin"
+            UV_INSTALL_DIR="${TOOLS_DIR}/bin" curl -LsSf https://astral.sh/uv/install.sh | sh
         fi
+        if [[ -x "${UV_BIN}" ]]; then
+            uv="${UV_BIN}"
+        else
+            uv="$(command -v uv)"
+        fi
+
+        if ! "${uv}" python find 3.12 >/dev/null 2>&1; then
+            echo "Installing Python 3.12 via uv (local, no sudo) ..."
+            "${uv}" python install 3.12
+        fi
+        py312="$("${uv}" python find 3.12)"
+
+        # Expose python3.12 on PATH for the RAI installer.
+        shim_dir="${TOOLS_DIR}/py312/bin"
+        mkdir -p "${shim_dir}"
+        ln -sf "${py312}" "${shim_dir}/python3.12"
+        export PATH="${shim_dir}:${PATH}"
+        echo "Using Python 3.12 at: ${py312}"
 
         # 2. The .tgz must be present (SSO-gated download).
         if [[ ! -f "${RAI_TGZ}" ]]; then

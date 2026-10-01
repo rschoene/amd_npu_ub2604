@@ -85,11 +85,16 @@ installer. It creates its **own Python venv** (no Miniforge/conda needed).
    `install_ryzen_ai.sh -a yes -p tools/ryzen_ai/venv` (non-interactive), then
    verifies the VitisEP is present.
 
-**Prerequisite:** RAI requires **Python 3.12.x** (it builds its venv from it).
-If `python3.12` is missing:
+**Prerequisite:** RAI's installer hard-requires **Python 3.12.x** (it calls
+`python3.12` directly to build its venv). Ubuntu 26.04 has no `python3.12` in
+apt, so `./setup_whisper.sh rai` provisions one **locally with `uv`** (no
+`sudo`, no apt) — it downloads a managed CPython 3.12 into
+`~/.local/share/uv` and exposes a `python3.12` shim on PATH for the installer.
+
+The RAI installer also wants `linux-libc-dev` and `zip` (one-time, needs sudo):
 
 ```bash
-sudo apt update && sudo apt install -y python3.12 python3.12-venv
+sudo apt install -y linux-libc-dev zip
 ```
 
 Everything stays under `tools/` and `whisper/` (both git-ignored).
